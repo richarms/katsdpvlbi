@@ -1,0 +1,42 @@
+version: "3.7"
+services:
+  jive5ab-recv:
+    build:
+      context: .
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      # jive5ab control
+      J5A_PORT: 2620
+      J5A_VERBOSITY: 3
+
+      # default network config (can be changed at runtime via KATCP)
+      J5A_PROTOCOL: udps
+      J5A_NETPORT: "50000"
+      J5A_BUFF_RCV: 33554432
+      J5A_BUFF_SND: 33554432
+      J5A_THREADS: 4
+
+      # VBS/FlexBuff recording
+      DISK_PATHS: "/mnt/disk0,/mnt/disk1"       # comma-separated bind mounts (see volumes)
+      AUTOSTART_RECORD: "false"                 # leave false; start via KATCP
+      SCAN_NAME: ""                             # optional if AUTOSTART_RECORD=true
+
+      # legacy net2file path still available
+      OUTPUT_PATH: /data0/testscan/testscan.vdif
+      AUTOSTART_NET2FILE: "false"
+
+      # KATCP proxy
+      KATCP_ENABLE: "true"
+      KATCP_PORT: 7147
+
+    volumes:
+      - /mnt/disk0:/mnt/disk0
+      - /mnt/disk1:/mnt/disk1
+
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'version?;' | socat - TCP:127.0.0.1:2620,connect-timeout=1 | grep -q '!version?'"]
+      interval: 90s
+      timeout: 2s
+      retries: 2
+
