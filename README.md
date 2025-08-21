@@ -1,6 +1,6 @@
 Provides a prototype workflow for streaming and recording VLBI VDIF data over UDP using jive5ab and a Python-based sender.
 
-#Components
+# Components
 ## Sender
 
 Python script that generates synthetic VDIF frames.
