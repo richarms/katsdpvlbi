@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 VDIF_HEADER_BYTES = 32
 VDIF_VERSION = 1
-BITS_PER_SAMPLE = 2
+BITS_PER_SAMPLE = 2  # actual bits per sample (not minus one)
 CHANNELS = 1
 STATION_ID = "AA"
 THREAD_ID = 0
@@ -20,20 +20,36 @@ def vdif_ref_epoch_info(unix_t):
     return ref_epoch, secs_from_ref
 
 def build_vdif_header(secs_from_ref, ref_epoch, frame_within_sec, frame_len_bytes):
-    log2ch = int(math.log2(CHANNELS))
+    """Build a minimal 32-byte VDIF header.
+
+    The layout follows the VDIF standard (see
+    https://vlbi.org/vdif/docs/vdif-specification) and matches the structure
+    used inside jive5ab. The previous implementation mixed several fields,
+    which resulted in an invalid header that jive5ab could not recognise and
+    caused ``vbsrecord`` to abort with ``rtm==fill2vbs``.
+    """
+
     frame_len_8 = frame_len_bytes // 8
-    w0 = secs_from_ref & 0x3FFFFFFF
-    w1 = ((frame_within_sec & 0xFFFFFF) << 8) | ((log2ch & 0x1F) << 3) | ((BITS_PER_SAMPLE - 1) & 0x7)
-    w2 = (ord(STATION_ID[0]) << 24) | (ord(STATION_ID[1]) << 16) | ((VDIF_VERSION & 0x1F) << 8) | (ref_epoch & 0x3F)
-    w3 = (frame_len_8 & 0xFFFFFF) << 8
-    w4 = (THREAD_ID & 0x3FF)
-    h = bytearray(VDIF_HEADER_BYTES)
-    struct.pack_into(">I", h,  0, w0)
-    struct.pack_into(">I", h,  4, w1)
-    struct.pack_into(">I", h,  8, w2)
-    struct.pack_into(">I", h, 12, w3)
-    struct.pack_into(">I", h, 16, w4)
-    return h
+    log2ch = int(math.log2(CHANNELS))
+
+    # Word 0
+    legacy = 1  # we only implement the legacy 32 byte header
+    invalid = 0
+    w0 = ((invalid & 0x1) << 31) | ((legacy & 0x1) << 30) | (secs_from_ref & 0x3FFFFFFF)
+
+    # Word 1
+    w1 = ((frame_within_sec & 0xFFFFFF) << 8) | ((ref_epoch & 0x3F) << 2)
+
+    # Word 2
+    w2 = ((frame_len_8 & 0x00FFFFFF) << 8) | ((log2ch & 0x1F) << 3) | (VDIF_VERSION & 0x7)
+
+    # Word 3
+    station = (ord(STATION_ID[0]) << 8) | ord(STATION_ID[1])
+    w3 = ((station & 0xFFFF) << 16) | ((THREAD_ID & 0x3FF) << 6) | (((BITS_PER_SAMPLE - 1) & 0x1F) << 1)
+
+    header = bytearray(VDIF_HEADER_BYTES)
+    struct.pack_into(">IIII", header, 0, w0, w1, w2, w3)
+    return header
 
 def quantize_2bit_unsigned(x):
     thr = np.percentile(x, [25, 50, 75])
