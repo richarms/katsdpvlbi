@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
-import asyncio
+"""KATCP proxy server for jive5ab."""
+
 import argparse
+import asyncio
+import logging
 import re
+
 from aiokatcp import DeviceServer, Sensor
+
+logger = logging.getLogger(__name__)
+
 
 # ---------------- low-level jive helpers ----------------
 
 async def jive_cmd(port: int, cmd: str, timeout: float = 1.0) -> str:
+    """Send *cmd* to the jive5ab control port and return the raw reply."""
+
     reader, writer = await asyncio.wait_for(
         asyncio.open_connection("127.0.0.1", port), timeout=timeout
     )
@@ -22,17 +31,27 @@ async def jive_cmd(port: int, cmd: str, timeout: float = 1.0) -> str:
         except Exception:
             pass
 
-def parse_status(reply: str):
+
+def parse_status(reply: str) -> str:
+    """Extract the state from a ``status?`` reply."""
+
     m = re.search(r"!status\?\s+\d+\s:\s(\w+)\s:\s(\d+)", reply)
     return m.group(1) if m else "unknown"
 
+
 def parse_protocol(reply: str) -> str:
+    """Extract the network protocol from a ``net_protocol?`` reply."""
+
     m = re.search(r"!net_protocol\?\s+\d+\s:\s([A-Za-z0-9_]+)", reply)
     return m.group(1) if m else "unknown"
 
+
 def parse_port(reply: str) -> str:
+    """Extract the configured port from a ``net_port?`` reply."""
+
     m = re.search(r"!net_port\?\s+\d+\s:\s(.+?)\s;", reply)
     return m.group(1).strip() if m else "unknown"
+
 
 # ---------------- aiokatcp server ----------------
 
@@ -45,18 +64,22 @@ class Jive5abServer(DeviceServer):
         super().__init__(host, port)
         self.jive_port = jive_port
 
-        # Sensors (older aiokatcp: description is positional; set values explicitly)
-        self.s_state = Sensor(str, "jive5ab-state", "jive5ab state"); self.s_state.set_value("unknown")
-        self.s_bytes = Sensor(int, "jive5ab-bytes", "bytes written");  self.s_bytes.set_value(0)
-        self.s_proto = Sensor(str, "jive5ab-protocol", "network protocol"); self.s_proto.set_value("unknown")
-        self.s_nport = Sensor(str, "jive5ab-port", "net_port");        self.s_nport.set_value("unknown")
-        self.s_error = Sensor(str, "jive5ab-error", "last proxy error"); self.s_error.set_value("")
-
-        # Older aiokatcp only accepts one sensor per add()
-        for s in (self.s_state, self.s_bytes, self.s_proto, self.s_nport, self.s_error):
-            self.sensors.add(s)
+        self.s_state = self._make_sensor(str, "jive5ab-state", "jive5ab state", "unknown")
+        self.s_bytes = self._make_sensor(int, "jive5ab-bytes", "bytes written", 0)
+        self.s_proto = self._make_sensor(str, "jive5ab-protocol", "network protocol", "unknown")
+        self.s_nport = self._make_sensor(str, "jive5ab-port", "net_port", "unknown")
+        self.s_error = self._make_sensor(str, "jive5ab-error", "last proxy error", "")
 
         self._poll_task = None
+
+    def _make_sensor(self, sensor_type, name, description, initial):
+        """Create a sensor, initialise it and add it to the server."""
+
+        sensor = Sensor(sensor_type, name, description)
+        sensor.set_value(initial)
+        # Older aiokatcp only accepts one sensor per add()
+        self.sensors.add(sensor)
+        return sensor
 
     async def start(self):
         await super().start()
@@ -76,20 +99,26 @@ class Jive5abServer(DeviceServer):
             await self._poll_once()
             await asyncio.sleep(120.0)
 
-    async def _poll_once(self):
+    async def _poll_once(self) -> None:
         try:
-            self.s_state.set_value(parse_status(await jive_cmd(self.jive_port, "status?")))
+            reply = await jive_cmd(self.jive_port, "status?")
+            self.s_state.set_value(parse_status(reply))
             self.s_error.set_value("")
-        except Exception as e:
-            self.s_error.set_value(f"status?: {e}")
+        except (asyncio.TimeoutError, OSError) as err:
+            self.s_error.set_value(f"status?: {err}")
+            logger.error("status? failed: %s", err)
         try:
-            self.s_proto.set_value(parse_protocol(await jive_cmd(self.jive_port, "net_protocol?")))
-        except Exception as e:
-            self.s_error.set_value(f"net_protocol?: {e}")
+            reply = await jive_cmd(self.jive_port, "net_protocol?")
+            self.s_proto.set_value(parse_protocol(reply))
+        except (asyncio.TimeoutError, OSError) as err:
+            self.s_error.set_value(f"net_protocol?: {err}")
+            logger.error("net_protocol? failed: %s", err)
         try:
-            self.s_nport.set_value(parse_port(await jive_cmd(self.jive_port, "net_port?")))
-        except Exception as e:
-            self.s_error.set_value(f"net_port?: {e}")
+            reply = await jive_cmd(self.jive_port, "net_port?")
+            self.s_nport.set_value(parse_port(reply))
+        except (asyncio.TimeoutError, OSError) as err:
+            self.s_error.set_value(f"net_port?: {err}")
+            logger.error("net_port? failed: %s", err)
 
     # ---------------- KATCP requests (name-based) ----------------
 
@@ -108,24 +137,35 @@ class Jive5abServer(DeviceServer):
                 cmd = f"net_protocol = udps : {int(rcv)} : {int(snd)} : {int(threads)}"
             else:
                 cmd = "net_protocol = udp"
+        except ValueError as err:
+            return "fail", str(err)
+        try:
             await jive_cmd(self.jive_port, cmd)
             await self._poll_once()
             return "ok", ""
-        except Exception as e:
-            self.s_error.set_value(str(e)); return "fail", str(e)
+        except (asyncio.TimeoutError, OSError) as err:
+            self.s_error.set_value(str(err))
+            logger.error("set-protocol failed: %s", err)
+            return "fail", str(err)
 
     async def request_set_port(self, ctx, destination):
         """Set net_port. Usage: ?set-port <port | mcast@port> (e.g. 50000 or 239.1.2.3@50000)"""
         try:
             if "@" in destination:
-                ip, port = destination.split("@", 1); int(port)
+                ip, port = destination.split("@", 1)
+                int(port)
             else:
                 int(destination)
+        except ValueError:
+            return "fail", "invalid port"
+        try:
             await jive_cmd(self.jive_port, f"net_port = {destination}")
             await self._poll_once()
             return "ok", ""
-        except Exception as e:
-            self.s_error.set_value(str(e)); return "fail", str(e)
+        except (asyncio.TimeoutError, OSError) as err:
+            self.s_error.set_value(str(err))
+            logger.error("set-port failed: %s", err)
+            return "fail", str(err)
 
     async def request_set_disks(self, ctx, *paths):
         """Configure FlexBuff mountpoints. Usage: ?set-disks /mnt/disk0 [: /mnt/disk1 : ...]"""
@@ -136,20 +176,24 @@ class Jive5abServer(DeviceServer):
         try:
             await jive_cmd(self.jive_port, f"set_disks = {joined}")
             return "ok", ""
-        except Exception as e:
-            self.s_error.set_value(str(e)); return "fail", str(e)
+        except (asyncio.TimeoutError, OSError) as err:
+            self.s_error.set_value(str(err))
+            logger.error("set-disks failed: %s", err)
+            return "fail", str(err)
 
     async def request_record_start(self, ctx, scan_name):
         """Start VBS recording (shrapnel). Usage: ?record-start <scan_name>"""
         if not scan_name:
             return "fail", "scan_name required"
         try:
-            r = await jive_cmd(self.jive_port, f"record = on:{scan_name}")
+            await jive_cmd(self.jive_port, f"record = on:{scan_name}")
             # Many builds do not echo bytes for record?, but poll anyway:
             await self._poll_once()
             return "ok", ""
-        except Exception as e:
-            self.s_error.set_value(str(e)); return "fail", str(e)
+        except (asyncio.TimeoutError, OSError) as err:
+            self.s_error.set_value(str(err))
+            logger.error("record-start failed: %s", err)
+            return "fail", str(err)
 
     async def request_record_stop(self, ctx):
         """Stop VBS recording. Usage: ?record-stop"""
@@ -157,8 +201,10 @@ class Jive5abServer(DeviceServer):
             await jive_cmd(self.jive_port, "record = off")
             await self._poll_once()
             return "ok", ""
-        except Exception as e:
-            self.s_error.set_value(str(e)); return "fail", str(e)
+        except (asyncio.TimeoutError, OSError) as err:
+            self.s_error.set_value(str(err))
+            logger.error("record-stop failed: %s", err)
+            return "fail", str(err)
 
     async def request_record_status(self, ctx):
         """Query VBS recording status. Usage: ?record-status"""
@@ -171,8 +217,10 @@ class Jive5abServer(DeviceServer):
                 state, bytes_ = m.group(1), m.group(2)
                 return "ok", f"{state} {bytes_}B"
             return "ok", rep.strip()
-        except Exception as e:
-            self.s_error.set_value(str(e)); return "fail", str(e)
+        except (asyncio.TimeoutError, OSError) as err:
+            self.s_error.set_value(str(err))
+            logger.error("record-status failed: %s", err)
+            return "fail", str(err)
 
     # Keep net2file controls if you still need them
     async def request_net2file_start(self, ctx, output_path="/mnt/disk0/testscan/testscan.vdif"):
@@ -187,8 +235,10 @@ class Jive5abServer(DeviceServer):
             await jive_cmd(self.jive_port, "net2file = on")
             await self._poll_once()
             return "ok", ""
-        except Exception as e:
-            self.s_error.set_value(str(e)); return "fail", str(e)
+        except (asyncio.TimeoutError, OSError) as err:
+            self.s_error.set_value(str(err))
+            logger.error("net2file-start failed: %s", err)
+            return "fail", str(err)
 
     async def request_net2file_stop(self, ctx):
         """Stop legacy net2file (off, flush, close)."""
@@ -198,8 +248,10 @@ class Jive5abServer(DeviceServer):
             await jive_cmd(self.jive_port, "net2file = close")
             await self._poll_once()
             return "ok", ""
-        except Exception as e:
-            self.s_error.set_value(str(e)); return "fail", str(e)
+        except (asyncio.TimeoutError, OSError) as err:
+            self.s_error.set_value(str(err))
+            logger.error("net2file-stop failed: %s", err)
+            return "fail", str(err)
 
 
 # ---------------- CLI ----------------
@@ -219,6 +271,7 @@ async def _amain():
         await server.stop()
 
 def main():
+    logging.basicConfig(level=logging.INFO)
     asyncio.run(_amain())
 
 if __name__ == "__main__":
