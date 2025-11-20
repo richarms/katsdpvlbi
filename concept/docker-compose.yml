@@ -27,7 +27,7 @@ services:
       interval: 60s
       timeout: 2s
       retries: 3
-    # these sysctls won't be honored in all v1/docker-compose paths; set them on the host.
+    # it turns out these sysctls won't be honored in all v1/docker-compose paths; set them on the host.
     # sysctls:
     #   net.core.rmem_max: "268435456"
     #   net.core.rmem_default: "134217728"
