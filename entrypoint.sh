@@ -15,7 +15,7 @@ for i in {1..50}; do
   sleep 0.2
 done
 
-# Ensure bind-mount directories exist (inside container)
+# Ensure bind-mount directories exist
 IFS=',' read -r -a DISK_ARR <<< "${DISK_PATHS:-}"
 for d in "${DISK_ARR[@]}"; do
   [[ -z "$d" ]] && continue
@@ -42,7 +42,7 @@ fi
 echo "[entrypoint] net_port = ${J5A_NETPORT}"
 send "net_port = ${J5A_NETPORT}"
 
-# Optional legacy net2file autostart (usually leave off now)
+# (legacy) net2file autostart
 if [[ "${AUTOSTART_NET2FILE:-false}" == "true" ]]; then
   mkdir -p "$(dirname "${OUTPUT_PATH}")" || true
   echo "[entrypoint] net2file capture started -> ${OUTPUT_PATH}"
@@ -50,7 +50,7 @@ if [[ "${AUTOSTART_NET2FILE:-false}" == "true" ]]; then
   send "net2file = on"
 fi
 
-# Optional VBS autostart
+# VBS autostart
 if [[ "${AUTOSTART_RECORD:-false}" == "true" && -n "${SCAN_NAME:-}" ]]; then
   echo "[entrypoint] record=on:${SCAN_NAME}"
   send "record = on:${SCAN_NAME}"
