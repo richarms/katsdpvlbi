@@ -6,12 +6,12 @@ LABEL maintainer="Richard Armstrong <richarms@sarao.ac.za>"
 # Suppress debconf warnings
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install some system packages used by multiple images.
+# Install build dependencies.
 USER root
 
 RUN apt-get update && apt-get install -y \
     build-essential git cmake pkg-config libx11-dev libxext-dev \
-    libreadline-dev python3 python3-pip socat netcat-openbsd iproute2 \
+    libreadline-dev python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Build jive5ab
@@ -24,23 +24,42 @@ RUN git checkout erroneous-delete-nonempty-file && \
 WORKDIR /opt/jive5ab/build
 RUN cmake -DSSAPI_ROOT=nossapi .. && \
 	make -j$(nproc) B2B=64 && \
-	make install B2B=64 && \
+	make DESTDIR=/jive5ab-install install B2B=64 && \
 	rm -r /opt/jive5ab
-
-# Add entrypoint + KATCP proxy
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY aiokatcp_jive5ab.py /usr/local/bin/aiokatcp_jive5ab.py
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/aiokatcp_jive5ab.py
-
 
 USER kat
 ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
 
 # Install aiokatcp-python
-RUN pip3 install aiokatcp
+RUN pip install aiokatcp && pip check
 
-# Runtime dir
-RUN mkdir -p /home/kat/runtime /home/kat/data
+#######################################################################
+
+FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-runtime
+LABEL maintainer="Richard Armstrong <richarms@sarao.ac.za>"
+
+# Suppress debconf warnings
+ENV DEBIAN_FRONTEND=noninteractive
+
+USER root
+RUN apt-get update && apt-get install -y \
+    socat netcat-openbsd iproute2 libx11-6 libxext6 libreadline8 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /jive5ab-install /
+COPY --from=build --chown=kat:kat /home/kat/ve3 /home/kat/ve3
+
+# Add entrypoint + KATCP proxy
+COPY --chown=kat:kat entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chown=kat:kat aiokatcp_jive5ab.py /usr/local/bin/aiokatcp_jive5ab.py
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/aiokatcp_jive5ab.py
+RUN ldconfig
+
+RUN mkdir -p /home/kat/runtime /home/kat/data /runtime && \
+    chown -R kat:kat /home/kat/runtime /home/kat/data /runtime
+
+USER kat
+ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
 WORKDIR /runtime
 
 
@@ -59,4 +78,3 @@ ENV J5A_PORT=2620 \
     KATCP_PORT=7147
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-
