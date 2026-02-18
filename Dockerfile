@@ -56,9 +56,9 @@ COPY --from=build /jive5ab-install /
 COPY --from=build --chown=kat:kat /home/kat/ve3 /home/kat/ve3
 
 # Add entrypoint + KATCP proxy
-COPY --chown=kat:kat entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY --chown=kat:kat aiokatcp_jive5ab.py /usr/local/bin/aiokatcp_jive5ab.py
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/aiokatcp_jive5ab.py
+COPY --chown=kat:kat scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chown=kat:kat scripts/jive5ab_katcp_proxy.py /usr/local/bin/jive5ab_katcp_proxy.py
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/jive5ab_katcp_proxy.py
 RUN ldconfig
 
 RUN mkdir -p /home/kat/runtime /home/kat/data /runtime && \
