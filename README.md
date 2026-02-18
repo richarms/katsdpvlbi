@@ -22,7 +22,10 @@ net2file: write incoming frames into flat files (for debugging).
 
 ## Usage
 
-Start receiver stack with docker-compose up.
+Start receiver stack with:
+`docker compose -f docker-compose.dev.yml up`
+
+CI/build pipeline uses `Jenkinsfile` + `Dockerfile`; compose is for local development.
 
 Run sender with destination set to the receiver host/port.
 
