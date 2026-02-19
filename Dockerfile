@@ -1,10 +1,10 @@
 ARG KATSDPDOCKERBASE_REGISTRY=harbor.sdp.kat.ac.za/dpp
 
-FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-build as build
+FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-build AS build
 LABEL maintainer="Richard Armstrong <richarms@sarao.ac.za>"
 
 # Suppress debconf warnings
-ENV DEBIAN_FRONTEND noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Install some system packages used by multiple images.
 USER root
