@@ -26,4 +26,4 @@ Start receiver stack with docker-compose up.
 
 Run sender with destination set to the receiver host/port.
 
-`python sender.py --dest 10.107.0.10 --port 50000 --fps 2`
+`python3 sim_send_vdif/send.py --dest 10.107.0.10 --port 50000 --fps 2`
