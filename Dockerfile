@@ -34,8 +34,10 @@ RUN cmake -DSSAPI_ROOT=nossapi .. && \
 USER kat
 ENV PATH="$PATH_PYTHON3" VIRTUAL_ENV="$VIRTUAL_ENV_PYTHON3"
 
-# Install aiokatcp-python
-RUN pip install aiokatcp && pip check
+# Install python dependencies
+COPY --chown=kat:kat requirements.txt /tmp/install/requirements.txt
+WORKDIR /tmp/install
+RUN install_pinned.py -r /tmp/install/requirements.txt && pip check
 
 #######################################################################
 
