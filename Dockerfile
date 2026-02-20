@@ -1,6 +1,11 @@
 ARG KATSDPDOCKERBASE_REGISTRY=harbor.sdp.kat.ac.za/dpp
+ARG JIVE5AB_REPO=https://github.com/jive-vlbi/jive5ab.git
+# Pinned ref for reproducible builds (branch erroneous-delete-nonempty-file as of 2026-02-20)
+ARG JIVE5AB_REF=05963cd9b88cc2446e8602d5c29bfb0a2417ccf8
 
 FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-build AS build
+ARG JIVE5AB_REPO
+ARG JIVE5AB_REF
 LABEL maintainer="Richard Armstrong <richarms@sarao.ac.za>"
 
 # Suppress debconf warnings
@@ -16,10 +21,9 @@ RUN apt-get update && apt-get install -y \
 
 # Build jive5ab
 WORKDIR /opt
-RUN git clone https://github.com/jive-vlbi/jive5ab.git
+RUN git clone "${JIVE5AB_REPO}" /opt/jive5ab
 WORKDIR /opt/jive5ab
-# checkout branch that includes the net2file fix and build
-RUN git checkout erroneous-delete-nonempty-file && \
+RUN git checkout --detach "${JIVE5AB_REF}" && \
 	mkdir build
 WORKDIR /opt/jive5ab/build
 RUN cmake -DSSAPI_ROOT=nossapi .. && \
