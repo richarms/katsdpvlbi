@@ -1,0 +1,11 @@
+build
+dist
+temp
+cover
+.coverage
+*.egg-info
+*.py[cod]
+__pycache__
+.mypy_cache
+pip-wheel-metadata
+Dockerfile

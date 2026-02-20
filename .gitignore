@@ -1,0 +1,10 @@
+*.py[cod]
+build
+dist
+temp
+cover
+.coverage
+.mypy_cache
+*.egg-info
+pip-wheel-metadata
+__pycache__/
