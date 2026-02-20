@@ -59,8 +59,7 @@ fi
 # Start aiokatcp proxy if enabled
 if [[ "${KATCP_ENABLE:-false}" == "true" ]]; then
   echo "[entrypoint] starting KATCP server on ${KATCP_PORT}"
-  python3 /usr/local/bin/aiokatcp_jive5ab.py --jive-port "${J5A_PORT}" --katcp-port "${KATCP_PORT}" &
+  python3 /usr/local/bin/jive5ab_katcp_proxy.py --jive-port "${J5A_PORT}" --katcp-port "${KATCP_PORT}" &
 fi
 
 wait ${J5A_PID}
-

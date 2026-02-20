@@ -1,4 +1,4 @@
-Provides a prototype workflow for streaming and recording VLBI VDIF data over UDP using jive5ab and a Python-based sender.
+Provides a prototype workflow for streaming and recording VLBI VDIF data over UDP using jive5ab and Python helper scripts.
 
 ## Sender
 
@@ -29,4 +29,10 @@ CI/build pipeline uses `Jenkinsfile` + `Dockerfile`; compose is for local develo
 
 Run sender with destination set to the receiver host/port.
 
-`python3 sim_send_vdif/send.py --dest 10.107.0.10 --port 50000 --fps 2`
+`python3 scripts/send_vdif.py --dest 10.107.0.10 --port 50000 --fps 2`
+
+## Repository layout
+
+Operational scripts live in `scripts/`.
+
+Older prototype files are kept under `archive/concept/`.
