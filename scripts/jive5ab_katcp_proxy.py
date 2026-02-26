@@ -195,6 +195,10 @@ class Jive5abServer(DeviceServer):
             logger.error("record-start failed: %s", err)
             return "fail", str(err)
 
+    async def request_capture_init(self, ctx, capture_block_id):
+        """Controller compatibility alias. Usage: ?capture-init <capture_block_id>"""
+        return await self.request_record_start(ctx, capture_block_id)
+
     async def request_record_stop(self, ctx):
         """Stop VBS recording. Usage: ?record-stop"""
         try:
@@ -205,6 +209,10 @@ class Jive5abServer(DeviceServer):
             self.s_error.set_value(str(err))
             logger.error("record-stop failed: %s", err)
             return "fail", str(err)
+
+    async def request_capture_done(self, ctx):
+        """Controller compatibility alias. Usage: ?capture-done"""
+        return await self.request_record_stop(ctx)
 
     async def request_record_status(self, ctx):
         """Query VBS recording status. Usage: ?record-status"""
@@ -276,4 +284,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
