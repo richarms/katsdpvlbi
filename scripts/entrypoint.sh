@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# If Docker/Mesos provides a command, run it instead of the default startup.
+# This allows controller wrappers (e.g. delay_run.sh + env setup) to execute.
+if [[ "$#" -gt 0 ]]; then
+  exec "$@"
+fi
+
 echo "[entrypoint] jive5ab port=${J5A_PORT} v=${J5A_VERBOSITY}"
 jive5ab -p "${J5A_PORT}" -m "${J5A_VERBOSITY}" &
 J5A_PID=$!
