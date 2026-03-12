@@ -36,6 +36,13 @@ if [[ "${#DISK_ARR[@]}" -gt 0 ]]; then
   send "set_disks = ${DISK_LIST}"
 fi
 
+# Configure VDIF mode required by vbsrecord.
+# This can be overridden by setting J5A_MODE explicitly.
+if [[ -n "${J5A_MODE:-}" ]]; then
+  echo "[entrypoint] mode = ${J5A_MODE}"
+  send "mode = ${J5A_MODE}"
+fi
+
 # Configure network protocol/port
 if [[ "${J5A_PROTOCOL}" == "udps" ]]; then
   echo "[entrypoint] net_protocol = udps : ${J5A_BUFF_RCV} : ${J5A_BUFF_SND} : ${J5A_THREADS}"
