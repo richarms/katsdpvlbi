@@ -243,7 +243,10 @@ class Jive5abServer(DeviceServer):
             rep = await jive_cmd(self.jive_port, "record = off")
             code, detail = parse_reply_status(rep)
             # jive5ab may auto-stop if the stream dies; treat explicit stop as idempotent.
-            if code != 0 and not (code == 6 and detail == "Not doing record"):
+            # Some FlexBuff/jive builds also return code 1 on record-off despite writing data.
+            if code == 1:
+                logger.warning("record-stop returned code 1, treating as successful stop: %r", rep.strip())
+            elif code != 0 and not (code == 6 and detail == "Not doing record"):
                 if detail:
                     raise RuntimeError(f"record failed with code {code}: {detail}")
                 raise RuntimeError(f"record failed with code {code}")
