@@ -11,7 +11,7 @@ services:
       J5A_MODE: vdif_8000-1024-16-2
 
       # default network config
-      J5A_PROTOCOL: udp
+      J5A_PROTOCOL: udps
       J5A_NETPORT: "50000"
       J5A_BUFF_RCV: 33554432
       J5A_BUFF_SND: 33554432
