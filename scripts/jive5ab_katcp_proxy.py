@@ -4,11 +4,16 @@
 import argparse
 import asyncio
 import logging
+import os
 import re
+from typing import Tuple
 
 from aiokatcp import DeviceServer, FailReply, Sensor
 
 logger = logging.getLogger(__name__)
+
+VDIF_PRODUCT_NAME = "vdif"
+WRITING_SUFFIX = ".writing"
 
 
 # ---------------- low-level jive helpers ----------------
@@ -79,6 +84,28 @@ def require_success(reply: str, command: str) -> None:
         if detail:
             raise RuntimeError(f"{command} failed with code {code}: {detail}")
         raise RuntimeError(f"{command} failed with code {code}")
+
+
+def capture_block_to_vdif_scan(capture_block_id: str) -> Tuple[str, str]:
+    """Map a capture block id to (<cbid_dir>, <scan_name>) for recorder output."""
+
+    cbid = capture_block_id.strip()
+    if not cbid:
+        raise ValueError("capture_block_id required")
+    if "/" in cbid or "\\" in cbid or ".." in cbid:
+        raise ValueError(f"invalid capture_block_id for path construction: {cbid!r}")
+    scan_name = f"{cbid}_{VDIF_PRODUCT_NAME}{WRITING_SUFFIX}"
+    return cbid, scan_name
+
+
+def first_disk_path_from_env() -> str:
+    """Return first configured DISK_PATHS entry, defaulting to /var/kat/data."""
+
+    raw = os.environ.get("DISK_PATHS", "/var/kat/data")
+    for path in (part.strip() for part in raw.split(",")):
+        if path:
+            return path
+    return "/var/kat/data"
 
 
 # ---------------- aiokatcp server ----------------
@@ -235,7 +262,18 @@ class Jive5abServer(DeviceServer):
 
     async def request_capture_init(self, ctx, capture_block_id):
         """Controller compatibility alias. Usage: ?capture-init <capture_block_id>"""
-        return await self.request_record_start(ctx, capture_block_id)
+        capture_block_id = _as_text(capture_block_id)
+        try:
+            cbid, scan_name = capture_block_to_vdif_scan(capture_block_id)
+            cbid_root = os.path.join(first_disk_path_from_env(), cbid)
+            os.makedirs(cbid_root, exist_ok=True)
+            rep = await jive_cmd(self.jive_port, f"set_disks = {cbid_root}")
+            require_success(rep, "set_disks")
+            return await self.request_record_start(ctx, scan_name)
+        except (OSError, RuntimeError, ValueError, asyncio.TimeoutError) as err:
+            self.s_error.set_value(str(err))
+            logger.error("capture-init failed: %s", err)
+            raise FailReply(str(err))
 
     async def request_record_stop(self, ctx):
         """Stop VBS recording. Usage: ?record-stop"""
