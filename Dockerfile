@@ -72,6 +72,7 @@ WORKDIR /runtime
 # Default environment
 ENV J5A_PORT=2620 \
     J5A_VERBOSITY=3 \
+    J5A_MODE=vdif_8000-1024-16-2 \
     J5A_PROTOCOL=udps \
     J5A_NETPORT=50000 \
     DISK_PATH=/mnt/disk0 \

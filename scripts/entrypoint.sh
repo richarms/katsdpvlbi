@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# If Docker/Mesos provides a command, run it instead of the default startup.
+# This allows controller wrappers (e.g. delay_run.sh + env setup) to execute.
+if [[ "$#" -gt 0 ]]; then
+  exec "$@"
+fi
+
 echo "[entrypoint] jive5ab port=${J5A_PORT} v=${J5A_VERBOSITY}"
 jive5ab -p "${J5A_PORT}" -m "${J5A_VERBOSITY}" &
 J5A_PID=$!
@@ -28,6 +34,13 @@ if [[ "${#DISK_ARR[@]}" -gt 0 ]]; then
   DISK_LIST=$(IFS=: ; echo "${DISK_ARR[*]}")
   echo "[entrypoint] set_disks = ${DISK_LIST}"
   send "set_disks = ${DISK_LIST}"
+fi
+
+# Configure VDIF mode required by vbsrecord.
+# This can be overridden by setting J5A_MODE explicitly.
+if [[ -n "${J5A_MODE:-}" ]]; then
+  echo "[entrypoint] mode = ${J5A_MODE}"
+  send "mode = ${J5A_MODE}"
 fi
 
 # Configure network protocol/port

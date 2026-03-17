@@ -4,14 +4,26 @@
 import argparse
 import asyncio
 import logging
+import os
 import re
+from typing import Tuple
 
-from aiokatcp import DeviceServer, Sensor
+from aiokatcp import DeviceServer, FailReply, Sensor
 
 logger = logging.getLogger(__name__)
 
+VDIF_PRODUCT_NAME = "vdif"
+WRITING_SUFFIX = ".writing"
+
 
 # ---------------- low-level jive helpers ----------------
+
+def _as_text(value) -> str:
+    """Convert KATCP string/bytes arguments to plain text."""
+
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", errors="strict")
+    return str(value)
 
 async def jive_cmd(port: int, cmd: str, timeout: float = 1.0) -> str:
     """Send *cmd* to the jive5ab control port and return the raw reply."""
@@ -51,6 +63,49 @@ def parse_port(reply: str) -> str:
 
     m = re.search(r"!net_port\?\s+\d+\s:\s(.+?)\s;", reply)
     return m.group(1).strip() if m else "unknown"
+
+
+def parse_reply_status(reply: str):
+    """Extract status code + detail from a jive5ab reply line."""
+
+    m = re.search(r"!\S+\s*=?\s*(\d+)(?:\s*:\s*(.*?))?\s*;", reply, re.DOTALL)
+    if not m:
+        raise ValueError(f"Could not parse jive5ab reply: {reply!r}")
+    code = int(m.group(1))
+    detail = (m.group(2) or "").strip()
+    return code, detail
+
+
+def require_success(reply: str, command: str) -> None:
+    """Raise RuntimeError if jive5ab reports a non-zero status code."""
+
+    code, detail = parse_reply_status(reply)
+    if code != 0:
+        if detail:
+            raise RuntimeError(f"{command} failed with code {code}: {detail}")
+        raise RuntimeError(f"{command} failed with code {code}")
+
+
+def capture_block_to_vdif_scan(capture_block_id: str) -> Tuple[str, str]:
+    """Map a capture block id to (<cbid_dir>, <scan_name>) for recorder output."""
+
+    cbid = capture_block_id.strip()
+    if not cbid:
+        raise ValueError("capture_block_id required")
+    if "/" in cbid or "\\" in cbid or ".." in cbid:
+        raise ValueError(f"invalid capture_block_id for path construction: {cbid!r}")
+    scan_name = f"{cbid}_{VDIF_PRODUCT_NAME}{WRITING_SUFFIX}"
+    return cbid, scan_name
+
+
+def first_disk_path_from_env() -> str:
+    """Return first configured DISK_PATHS entry, defaulting to /var/kat/data."""
+
+    raw = os.environ.get("DISK_PATHS", "/var/kat/data")
+    for path in (part.strip() for part in raw.split(",")):
+        if path:
+            return path
+    return "/var/kat/data"
 
 
 # ---------------- aiokatcp server ----------------
@@ -129,27 +184,33 @@ class Jive5abServer(DeviceServer):
 
     async def request_set_protocol(self, ctx, proto, rcv="33554432", snd="33554432", threads="4"):
         """Set network protocol. Usage: ?set-protocol <udp|udps> [<rcv> <snd> <threads>]"""
+        proto = _as_text(proto)
+        rcv = _as_text(rcv)
+        snd = _as_text(snd)
+        threads = _as_text(threads)
         proto_l = proto.lower()
         if proto_l not in ("udp", "udps"):
-            return "fail", "protocol must be udp or udps"
+            raise FailReply("protocol must be udp or udps")
         try:
             if proto_l == "udps":
                 cmd = f"net_protocol = udps : {int(rcv)} : {int(snd)} : {int(threads)}"
             else:
                 cmd = "net_protocol = udp"
         except ValueError as err:
-            return "fail", str(err)
+            raise FailReply(str(err))
         try:
-            await jive_cmd(self.jive_port, cmd)
+            rep = await jive_cmd(self.jive_port, cmd)
+            require_success(rep, "net_protocol")
             await self._poll_once()
             return "ok", ""
-        except (asyncio.TimeoutError, OSError) as err:
+        except (asyncio.TimeoutError, OSError, RuntimeError, ValueError) as err:
             self.s_error.set_value(str(err))
             logger.error("set-protocol failed: %s", err)
-            return "fail", str(err)
+            raise FailReply(str(err))
 
     async def request_set_port(self, ctx, destination):
         """Set net_port. Usage: ?set-port <port | mcast@port> (e.g. 50000 or 239.1.2.3@50000)"""
+        destination = _as_text(destination)
         try:
             if "@" in destination:
                 ip, port = destination.split("@", 1)
@@ -157,54 +218,86 @@ class Jive5abServer(DeviceServer):
             else:
                 int(destination)
         except ValueError:
-            return "fail", "invalid port"
+            raise FailReply("invalid port")
         try:
-            await jive_cmd(self.jive_port, f"net_port = {destination}")
+            rep = await jive_cmd(self.jive_port, f"net_port = {destination}")
+            require_success(rep, "net_port")
             await self._poll_once()
             return "ok", ""
-        except (asyncio.TimeoutError, OSError) as err:
+        except (asyncio.TimeoutError, OSError, RuntimeError, ValueError) as err:
             self.s_error.set_value(str(err))
             logger.error("set-port failed: %s", err)
-            return "fail", str(err)
+            raise FailReply(str(err))
 
     async def request_set_disks(self, ctx, *paths):
         """Configure FlexBuff mountpoints. Usage: ?set-disks /mnt/disk0 [: /mnt/disk1 : ...]"""
         if not paths:
-            return "fail", "provide at least one disk path"
+            raise FailReply("provide at least one disk path")
         # send comma-separated list
-        joined = ":".join(paths)
+        joined = ":".join(_as_text(path) for path in paths)
         try:
-            await jive_cmd(self.jive_port, f"set_disks = {joined}")
+            rep = await jive_cmd(self.jive_port, f"set_disks = {joined}")
+            require_success(rep, "set_disks")
             return "ok", ""
-        except (asyncio.TimeoutError, OSError) as err:
+        except (asyncio.TimeoutError, OSError, RuntimeError, ValueError) as err:
             self.s_error.set_value(str(err))
             logger.error("set-disks failed: %s", err)
-            return "fail", str(err)
+            raise FailReply(str(err))
 
     async def request_record_start(self, ctx, scan_name):
         """Start VBS recording (shrapnel). Usage: ?record-start <scan_name>"""
+        scan_name = _as_text(scan_name)
         if not scan_name:
-            return "fail", "scan_name required"
+            raise FailReply("scan_name required")
         try:
-            await jive_cmd(self.jive_port, f"record = on:{scan_name}")
+            rep = await jive_cmd(self.jive_port, f"record = on:{scan_name}")
+            require_success(rep, "record")
             # Many builds do not echo bytes for record?, but poll anyway:
             await self._poll_once()
             return "ok", ""
-        except (asyncio.TimeoutError, OSError) as err:
+        except (asyncio.TimeoutError, OSError, RuntimeError, ValueError) as err:
             self.s_error.set_value(str(err))
             logger.error("record-start failed: %s", err)
-            return "fail", str(err)
+            raise FailReply(str(err))
+
+    async def request_capture_init(self, ctx, capture_block_id):
+        """Controller compatibility alias. Usage: ?capture-init <capture_block_id>"""
+        capture_block_id = _as_text(capture_block_id)
+        try:
+            cbid, scan_name = capture_block_to_vdif_scan(capture_block_id)
+            cbid_root = os.path.join(first_disk_path_from_env(), cbid)
+            os.makedirs(cbid_root, exist_ok=True)
+            rep = await jive_cmd(self.jive_port, f"set_disks = {cbid_root}")
+            require_success(rep, "set_disks")
+            return await self.request_record_start(ctx, scan_name)
+        except (OSError, RuntimeError, ValueError, asyncio.TimeoutError) as err:
+            self.s_error.set_value(str(err))
+            logger.error("capture-init failed: %s", err)
+            raise FailReply(str(err))
 
     async def request_record_stop(self, ctx):
         """Stop VBS recording. Usage: ?record-stop"""
         try:
-            await jive_cmd(self.jive_port, "record = off")
+            rep = await jive_cmd(self.jive_port, "record = off")
+            code, detail = parse_reply_status(rep)
+            # jive5ab may auto-stop if the stream dies; treat explicit stop as idempotent.
+            # Some FlexBuff/jive builds also return code 1 on record-off despite writing data.
+            if code == 1:
+                logger.warning("record-stop returned code 1, treating as successful stop: %r", rep.strip())
+            elif code != 0 and not (code == 6 and detail == "Not doing record"):
+                if detail:
+                    raise RuntimeError(f"record failed with code {code}: {detail}")
+                raise RuntimeError(f"record failed with code {code}")
             await self._poll_once()
             return "ok", ""
-        except (asyncio.TimeoutError, OSError) as err:
+        except (asyncio.TimeoutError, OSError, RuntimeError, ValueError) as err:
             self.s_error.set_value(str(err))
             logger.error("record-stop failed: %s", err)
-            return "fail", str(err)
+            raise FailReply(str(err))
+
+    async def request_capture_done(self, ctx):
+        """Controller compatibility alias. Usage: ?capture-done"""
+        return await self.request_record_stop(ctx)
 
     async def request_record_status(self, ctx):
         """Query VBS recording status. Usage: ?record-status"""
@@ -220,38 +313,45 @@ class Jive5abServer(DeviceServer):
         except (asyncio.TimeoutError, OSError) as err:
             self.s_error.set_value(str(err))
             logger.error("record-status failed: %s", err)
-            return "fail", str(err)
+            raise FailReply(str(err))
 
     # Keep net2file controls if you still need them
     async def request_net2file_start(self, ctx, output_path="/mnt/disk0/testscan/testscan.vdif"):
         """Start legacy net2file to OUTPUT_PATH."""
+        output_path = _as_text(output_path)
         try:
             r = await jive_cmd(self.jive_port, f"net2file = open : {output_path}, w")
-            if not r.startswith("!net2file = 0"):
-                await jive_cmd(self.jive_port, "net2file = connect")
+            try:
+                require_success(r, "net2file open")
+            except RuntimeError:
+                rep = await jive_cmd(self.jive_port, "net2file = connect")
+                require_success(rep, "net2file connect")
                 r2 = await jive_cmd(self.jive_port, f"net2file = open : {output_path}, w")
-                if not r2.startswith("!net2file = 0"):
-                    return "fail", "open failed"
-            await jive_cmd(self.jive_port, "net2file = on")
+                require_success(r2, "net2file open")
+            rep = await jive_cmd(self.jive_port, "net2file = on")
+            require_success(rep, "net2file on")
             await self._poll_once()
             return "ok", ""
-        except (asyncio.TimeoutError, OSError) as err:
+        except (asyncio.TimeoutError, OSError, RuntimeError, ValueError) as err:
             self.s_error.set_value(str(err))
             logger.error("net2file-start failed: %s", err)
-            return "fail", str(err)
+            raise FailReply(str(err))
 
     async def request_net2file_stop(self, ctx):
         """Stop legacy net2file (off, flush, close)."""
         try:
-            await jive_cmd(self.jive_port, "net2file = off")
-            await jive_cmd(self.jive_port, "net2file = flush")
-            await jive_cmd(self.jive_port, "net2file = close")
+            rep = await jive_cmd(self.jive_port, "net2file = off")
+            require_success(rep, "net2file off")
+            rep = await jive_cmd(self.jive_port, "net2file = flush")
+            require_success(rep, "net2file flush")
+            rep = await jive_cmd(self.jive_port, "net2file = close")
+            require_success(rep, "net2file close")
             await self._poll_once()
             return "ok", ""
-        except (asyncio.TimeoutError, OSError) as err:
+        except (asyncio.TimeoutError, OSError, RuntimeError, ValueError) as err:
             self.s_error.set_value(str(err))
             logger.error("net2file-stop failed: %s", err)
-            return "fail", str(err)
+            raise FailReply(str(err))
 
 
 # ---------------- CLI ----------------
@@ -276,4 +376,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
