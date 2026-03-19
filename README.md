@@ -1,38 +1,89 @@
-Provides a prototype workflow for streaming and recording VLBI VDIF data over UDP using jive5ab and Python helper scripts.
+# katsdpvlbi
 
-## Sender
+Provides the recorder/control side of the current VLBI sandbox workflow.
 
-Python script that generates synthetic VDIF frames.
+## Current Product
 
-Frames carry correctly-formed headers (sequence numbers, frame length, timestamps).
+The current `gpucbf` VLBI output is:
+- one tied-array beam
+- two polarisations
+- two sidebands
+- four VDIF threads total
 
-Packaged into UDP packets with an optional UDPS prefix.
+Thread interpretation:
+- `lsb-pol0`
+- `lsb-pol1`
+- `usb-pol0`
+- `usb-pol1`
 
-Transmission rate is configurable (frames per second).
+In the current sandbox configuration:
+- `pol0 -> x`
+- `pol1 -> y`
+- threads and mean-power sensors therefore appear as:
+  - `x0`
+  - `y0`
+  - `x1`
+  - `y1`
 
-## Receiver
+Bandwidth interpretation:
+- the V-engine input parent band is about `107 MHz`
+- the emitted VLBI bandwidth is `64 MHz`
+- the configured flat passband fraction is `0.9`
 
-jive5ab runs in Docker container.
+This is one beam represented as four VLBI threads from sideband × polarisation.
 
-Supports two modes:
+## Recorder Contract
 
-net2file: write incoming frames into flat files (for debugging).
+`katsdpvlbi` currently fronts `jive5ab` through a KATCP proxy so that
+`katsdpcontroller` can drive capture lifecycle through:
+- `?capture-init <cbid>`
+- `?capture-done`
 
-`record=on:<scan>:` record into FlexBuff VBS "shrapnel" chunks for long-term capture and transfer.
+The intended product layout is:
+- in-progress directory:
+  - `/scratch/data/<cbid>/<cbid>_vdif.writing/`
+- final directory:
+  - `/scratch/data/<cbid>/<cbid>_vdif/`
+
+Preferred shard naming inside the directory:
+- `<cbid>_vdif.00000000`
+- `<cbid>_vdif.00000001`
+
+Design rule:
+- `.writing` should indicate product state on the directory
+- shard basenames should remain stable and should not themselves carry `.writing`
+
+This keeps downstream validation and postprocessing simpler.
+
+## Receiver Modes
+
+`jive5ab` supports two modes here:
+- `net2file`
+  - flat-file debugging path
+- `record=on:<scan>`
+  - FlexBuff/VBS recording path used by the controller workflow
+
+The active path is the VBS recording path.
 
 ## Usage
 
-Start receiver stack with:
+Start the receiver stack with:
+
 `docker compose -f docker-compose.dev.yml up`
 
-CI/build pipeline uses `Jenkinsfile` + `Dockerfile`; compose is for local development.
+CI/build pipeline uses `Jenkinsfile` + `Dockerfile`; compose is for local
+development.
 
-Run sender with destination set to the receiver host/port.
+Synthetic sender example:
 
 `python3 scripts/send_vdif.py --dest 10.107.0.10 --port 50000 --fps 2`
 
-## Repository layout
+## Repository Layout
 
 Operational scripts live in `scripts/`.
 
-Older prototype files are kept under `archive/concept/`.
+Key files:
+- `scripts/jive5ab_katcp_proxy.py`
+- `scripts/validate_vdif.py`
+
+Older proof-of-concept material remains under `archive/concept/`.
