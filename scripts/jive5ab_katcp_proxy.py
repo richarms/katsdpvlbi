@@ -94,7 +94,7 @@ def capture_block_to_vdif_scan(capture_block_id: str) -> Tuple[str, str]:
         raise ValueError("capture_block_id required")
     if "/" in cbid or "\\" in cbid or ".." in cbid:
         raise ValueError(f"invalid capture_block_id for path construction: {cbid!r}")
-    scan_name = f"{cbid}_{VDIF_PRODUCT_NAME}{WRITING_SUFFIX}"
+    scan_name = f"{cbid}_{VDIF_PRODUCT_NAME}"
     return cbid, scan_name
 
 
@@ -266,8 +266,9 @@ class Jive5abServer(DeviceServer):
         try:
             cbid, scan_name = capture_block_to_vdif_scan(capture_block_id)
             cbid_root = os.path.join(first_disk_path_from_env(), cbid)
-            os.makedirs(cbid_root, exist_ok=True)
-            rep = await jive_cmd(self.jive_port, f"set_disks = {cbid_root}")
+            product_root = os.path.join(cbid_root, scan_name + WRITING_SUFFIX)
+            os.makedirs(product_root, exist_ok=True)
+            rep = await jive_cmd(self.jive_port, f"set_disks = {product_root}")
             require_success(rep, "set_disks")
             return await self.request_record_start(ctx, scan_name)
         except (OSError, RuntimeError, ValueError, asyncio.TimeoutError) as err:
