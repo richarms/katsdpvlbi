@@ -21,6 +21,12 @@ for i in {1..50}; do
   sleep 0.2
 done
 
+# Configure jumbo receive MTU before any recorder state that depends on it.
+if [[ -n "${J5A_MTU:-}" ]]; then
+  echo "[entrypoint] mtu = ${J5A_MTU}"
+  send "mtu = ${J5A_MTU}"
+fi
+
 # Ensure bind-mount directories exist
 IFS=',' read -r -a DISK_ARR <<< "${DISK_PATHS:-}"
 for d in "${DISK_ARR[@]}"; do
