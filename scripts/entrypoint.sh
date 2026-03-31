@@ -50,9 +50,9 @@ if [[ -n "${J5A_MODE:-}" ]]; then
 fi
 
 # Configure network protocol/port
-if [[ "${J5A_PROTOCOL}" == "udps" ]]; then
-  echo "[entrypoint] net_protocol = udps : ${J5A_BUFF_RCV} : ${J5A_BUFF_SND} : ${J5A_THREADS}"
-  send "net_protocol = udps : ${J5A_BUFF_RCV} : ${J5A_BUFF_SND} : ${J5A_THREADS}"
+if [[ "${J5A_PROTOCOL}" == "udps" || "${J5A_PROTOCOL}" == "udpsnor" ]]; then
+  echo "[entrypoint] net_protocol = ${J5A_PROTOCOL} : ${J5A_BUFF_RCV} : ${J5A_BUFF_SND} : ${J5A_THREADS}"
+  send "net_protocol = ${J5A_PROTOCOL} : ${J5A_BUFF_RCV} : ${J5A_BUFF_SND} : ${J5A_THREADS}"
 else
   echo "[entrypoint] net_protocol = udp"
   send "net_protocol = udp"

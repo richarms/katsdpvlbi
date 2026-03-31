@@ -183,17 +183,17 @@ class Jive5abServer(DeviceServer):
         return "ok", line
 
     async def request_set_protocol(self, ctx, proto, rcv="33554432", snd="33554432", threads="4"):
-        """Set network protocol. Usage: ?set-protocol <udp|udps> [<rcv> <snd> <threads>]"""
+        """Set network protocol. Usage: ?set-protocol <udp|udps|udpsnor> [<rcv> <snd> <threads>]"""
         proto = _as_text(proto)
         rcv = _as_text(rcv)
         snd = _as_text(snd)
         threads = _as_text(threads)
         proto_l = proto.lower()
-        if proto_l not in ("udp", "udps"):
-            raise FailReply("protocol must be udp or udps")
+        if proto_l not in ("udp", "udps", "udpsnor"):
+            raise FailReply("protocol must be udp, udps or udpsnor")
         try:
-            if proto_l == "udps":
-                cmd = f"net_protocol = udps : {int(rcv)} : {int(snd)} : {int(threads)}"
+            if proto_l in ("udps", "udpsnor"):
+                cmd = f"net_protocol = {proto_l} : {int(rcv)} : {int(snd)} : {int(threads)}"
             else:
                 cmd = "net_protocol = udp"
         except ValueError as err:
