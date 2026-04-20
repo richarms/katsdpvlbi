@@ -1,8 +1,8 @@
 # katsdpvlbi
 
-Provides the recorder/control side of the current VLBI sandbox workflow.
+Provides the recorder/control side of the MeerKAT+ VLBI instrument.
 
-## Current Product
+## Product
 
 The current `gpucbf` VLBI output is:
 - one tied-array beam
@@ -16,7 +16,7 @@ Thread interpretation:
 - `usb-pol0`
 - `usb-pol1`
 
-In the current sandbox configuration:
+In the current configuration:
 - `pol0 -> x`
 - `pol1 -> y`
 - threads and mean-power sensors therefore appear as:
@@ -26,7 +26,7 @@ In the current sandbox configuration:
   - `y1`
 
 Bandwidth interpretation:
-- the V-engine input parent band is about `107 MHz`
+- the V-engine input parent band is ~ `107 MHz`
 - the emitted VLBI bandwidth is `64 MHz`
 - the configured flat passband fraction is `0.9`
 
@@ -49,11 +49,9 @@ Preferred shard naming inside the directory:
 - `<cbid>_vdif.00000000`
 - `<cbid>_vdif.00000001`
 
-Design rule:
+Implementation Notes:
 - `.writing` should indicate product state on the directory
 - shard basenames should remain stable and should not themselves carry `.writing`
-
-This keeps downstream validation and postprocessing simpler.
 
 ## Receiver Modes
 
@@ -85,5 +83,3 @@ Operational scripts live in `scripts/`.
 Key files:
 - `scripts/jive5ab_katcp_proxy.py`
 - `scripts/validate_vdif.py`
-
-Older proof-of-concept material remains under `archive/concept/`.
