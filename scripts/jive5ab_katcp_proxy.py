@@ -5,8 +5,9 @@ import argparse
 import asyncio
 import logging
 import os
+from pathlib import Path
 import re
-from typing import Tuple
+from typing import Optional, Tuple
 
 from aiokatcp import DeviceServer, FailReply, Sensor
 
@@ -94,7 +95,7 @@ def capture_block_to_vdif_scan(capture_block_id: str) -> Tuple[str, str]:
         raise ValueError("capture_block_id required")
     if "/" in cbid or "\\" in cbid or ".." in cbid:
         raise ValueError(f"invalid capture_block_id for path construction: {cbid!r}")
-    scan_name = f"{cbid}_{VDIF_PRODUCT_NAME}{WRITING_SUFFIX}"
+    scan_name = f"{cbid}_{VDIF_PRODUCT_NAME}"
     return cbid, scan_name
 
 
@@ -106,6 +107,27 @@ def first_disk_path_from_env() -> str:
         if path:
             return path
     return "/var/kat/data"
+
+
+def flatten_vdif_recording_layout(product_root: Path, scan_name: str) -> bool:
+    """Flatten legacy ``<product_root>/<scan_name>/<scan_name>.*`` output in-place.
+
+    jive5ab creates a scan-named subdirectory beneath the configured disk root for
+    VBS recordings. We want ``product_root`` itself to be the in-progress product
+    directory, so move any nested capture files up one level and remove the extra
+    directory. Returns ``True`` if a nested directory was flattened.
+    """
+
+    nested_dir = product_root / scan_name
+    if not nested_dir.is_dir():
+        return False
+    for child in nested_dir.iterdir():
+        destination = product_root / child.name
+        if destination.exists():
+            raise FileExistsError(f"Cannot flatten {nested_dir}: destination exists: {destination}")
+        child.rename(destination)
+    nested_dir.rmdir()
+    return True
 
 
 # ---------------- aiokatcp server ----------------
@@ -125,7 +147,7 @@ class Jive5abServer(DeviceServer):
         self.s_nport = self._make_sensor(str, "jive5ab-port", "net_port", "unknown")
         self.s_error = self._make_sensor(str, "jive5ab-error", "last proxy error", "")
 
-        self._poll_task = None
+        self._active_capture: Optional[Tuple[Path, str]] = None
 
     def _make_sensor(self, sensor_type, name, description, initial):
         """Create a sensor, initialise it and add it to the server."""
@@ -138,21 +160,9 @@ class Jive5abServer(DeviceServer):
 
     async def start(self):
         await super().start()
-        self._poll_task = asyncio.create_task(self._poll_loop())
 
     async def stop(self):
-        if self._poll_task:
-            self._poll_task.cancel()
-            try:
-                await self._poll_task
-            except asyncio.CancelledError:
-                pass
         await super().stop()
-
-    async def _poll_loop(self):
-        while True:
-            await self._poll_once()
-            await asyncio.sleep(120.0)
 
     async def _poll_once(self) -> None:
         try:
@@ -179,21 +189,22 @@ class Jive5abServer(DeviceServer):
 
     async def request_status(self, ctx):
         """Return compact status line."""
+        await self._poll_once()
         line = f"{self.s_state.value} {self.s_bytes.value}B {self.s_proto.value} {self.s_nport.value}"
         return "ok", line
 
     async def request_set_protocol(self, ctx, proto, rcv="33554432", snd="33554432", threads="4"):
-        """Set network protocol. Usage: ?set-protocol <udp|udps> [<rcv> <snd> <threads>]"""
+        """Set network protocol. Usage: ?set-protocol <udp|udps|udpsnor> [<rcv> <snd> <threads>]"""
         proto = _as_text(proto)
         rcv = _as_text(rcv)
         snd = _as_text(snd)
         threads = _as_text(threads)
         proto_l = proto.lower()
-        if proto_l not in ("udp", "udps"):
-            raise FailReply("protocol must be udp or udps")
+        if proto_l not in ("udp", "udps", "udpsnor"):
+            raise FailReply("protocol must be udp, udps or udpsnor")
         try:
-            if proto_l == "udps":
-                cmd = f"net_protocol = udps : {int(rcv)} : {int(snd)} : {int(threads)}"
+            if proto_l in ("udps", "udpsnor"):
+                cmd = f"net_protocol = {proto_l} : {int(rcv)} : {int(snd)} : {int(threads)}"
             else:
                 cmd = "net_protocol = udp"
         except ValueError as err:
@@ -266,11 +277,14 @@ class Jive5abServer(DeviceServer):
         try:
             cbid, scan_name = capture_block_to_vdif_scan(capture_block_id)
             cbid_root = os.path.join(first_disk_path_from_env(), cbid)
-            os.makedirs(cbid_root, exist_ok=True)
-            rep = await jive_cmd(self.jive_port, f"set_disks = {cbid_root}")
+            product_root = os.path.join(cbid_root, scan_name + WRITING_SUFFIX)
+            os.makedirs(product_root, exist_ok=True)
+            rep = await jive_cmd(self.jive_port, f"set_disks = {product_root}")
             require_success(rep, "set_disks")
+            self._active_capture = (Path(product_root), scan_name)
             return await self.request_record_start(ctx, scan_name)
         except (OSError, RuntimeError, ValueError, asyncio.TimeoutError) as err:
+            self._active_capture = None
             self.s_error.set_value(str(err))
             logger.error("capture-init failed: %s", err)
             raise FailReply(str(err))
@@ -283,7 +297,7 @@ class Jive5abServer(DeviceServer):
             # jive5ab may auto-stop if the stream dies; treat explicit stop as idempotent.
             # Some FlexBuff/jive builds also return code 1 on record-off despite writing data.
             if code == 1:
-                logger.warning("record-stop returned code 1, treating as successful stop: %r", rep.strip())
+                logger.debug("record-stop returned code 1, treating as successful stop: %r", rep.strip())
             elif code != 0 and not (code == 6 and detail == "Not doing record"):
                 if detail:
                     raise RuntimeError(f"record failed with code {code}: {detail}")
@@ -297,7 +311,16 @@ class Jive5abServer(DeviceServer):
 
     async def request_capture_done(self, ctx):
         """Controller compatibility alias. Usage: ?capture-done"""
-        return await self.request_record_stop(ctx)
+        reply = await self.request_record_stop(ctx)
+        if self._active_capture is not None:
+            product_root, scan_name = self._active_capture
+            try:
+                flattened = flatten_vdif_recording_layout(product_root, scan_name)
+                if flattened:
+                    logger.info("Flattened nested VDIF capture layout under %s", product_root)
+            finally:
+                self._active_capture = None
+        return reply
 
     async def request_record_status(self, ctx):
         """Query VBS recording status. Usage: ?record-status"""
