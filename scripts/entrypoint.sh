@@ -14,7 +14,8 @@ J5A_PID=$!
 send() { echo "$1;" | socat - TCP:127.0.0.1:${J5A_PORT},connect-timeout=1 || true; }
 
 extract_target() {
-  printf '%s\n' "${J5A_NETPORT%%@*}"
+  local target="${J5A_NETPORT%%@*}"
+  printf '%s\n' "${target%%+*}"
 }
 
 extract_route_dev() {
