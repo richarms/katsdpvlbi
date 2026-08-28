@@ -1,6 +1,6 @@
 # katsdpvlbi
 
-Provides the recorder/control side of the MeerKAT+ VLBI instrument.
+Provides the recorder side of the MeerKAT+ VLBI instrument.
 
 ## Product
 
@@ -65,14 +65,11 @@ The active path is the VBS recording path.
 
 ## Usage
 
-Start the receiver stack with:
+For local dvelopment:
 
 `docker compose -f docker-compose.dev.yml up`
 
-CI/build pipeline uses `Jenkinsfile` + `Dockerfile`; compose is for local
-development.
-
-Synthetic sender example:
+Offline sender:
 
 `python3 scripts/send_vdif.py --dest 10.107.0.10 --port 50000 --fps 2`
 
