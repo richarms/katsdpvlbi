@@ -8,6 +8,7 @@ tests_require = ["pytest"]
 
 setup(
     name="katsdpvlbi",
+    packages=[],
     description="MeerKAT VLBI data capture utilities",
     author="MeerKAT SDP team",
     author_email="sdpdev+katsdpvlbi@ska.ac.za",
