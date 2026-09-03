@@ -1,3 +1,4 @@
 -c https://raw.githubusercontent.com/ska-sa/katsdpdockerbase/master/docker-base-build/base-requirements.txt
 
 pytest
+pytest-cov

@@ -7,5 +7,7 @@ katsdp.setDependencies([
     'ska-sa/katsdpdockerbase/master',
     'ska-sa/katsdpservices/master',
     'ska-sa/katsdptelstate/master'])
-katsdp.standardBuild(push_external: true)
+katsdp.standardBuild(
+    pkg: 'scripts',
+    push_external: true)
 katsdp.mail('sdpdev+katsdpvlbi@ska.ac.za')
