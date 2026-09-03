@@ -1,7 +1,7 @@
 ARG KATSDPDOCKERBASE_REGISTRY=harbor.sdp.kat.ac.za/dpp
 ARG JIVE5AB_REPO=https://github.com/jive-vlbi/jive5ab.git
-# Pinned ref for reproducible builds (branch erroneous-delete-nonempty-file as of 2026-02-20)
-ARG JIVE5AB_REF=05963cd9b88cc2446e8602d5c29bfb0a2417ccf8
+# Pinned ref for reproducible builds (branch erroneous-delete-nonempty-file)
+ARG JIVE5AB_REF=b228209b4fa4e1f4a61b76b89974935fa6d27836
 
 FROM $KATSDPDOCKERBASE_REGISTRY/docker-base-build AS build
 ARG JIVE5AB_REPO
