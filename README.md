@@ -68,6 +68,12 @@ be updated together.
 
 The active path is the VBS recording path.
 
+`J5A_NETPORT` accepts SDP multicast ranges such as `239.192.63.252+3@7148`.
+The entrypoint expands this to four explicit `address@port` destinations,
+separated by colons, for jive5ab. Native jive5ab destination lists and single
+destinations are also accepted. When `J5A_CBF_INTERFACE` is set, each multicast
+destination must route through that interface before the receiver starts.
+
 ## Usage
 
 For local dvelopment:

@@ -57,6 +57,7 @@ COPY --from=build --chown=kat:kat /home/kat/ve3 /home/kat/ve3
 
 # Add entrypoint + KATCP proxy
 COPY --chown=kat:kat scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chown=kat:kat scripts/expand_net_port.py /usr/local/bin/expand_net_port.py
 COPY --chown=kat:kat scripts/jive5ab_katcp_proxy.py /usr/local/bin/jive5ab_katcp_proxy.py
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/jive5ab_katcp_proxy.py
 RUN ldconfig
