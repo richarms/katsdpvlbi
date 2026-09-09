@@ -161,3 +161,53 @@ def test_capture_requires_stream_identity(tmp_path: Path, monkeypatch) -> None:
         assert list(tmp_path.iterdir()) == []
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("states", [
+    ["!record? 0 : off ;"],
+    ["!record? 0 : on : 1 : scan : 193536000 ;", "!record? 0 : off ;"],
+])
+def test_code_one_stop_requires_confirmed_off(tmp_path, monkeypatch, states):
+    writing = make_raw_writing(tmp_path)
+
+    async def run():
+        server = proxy.Jive5abServer("127.0.0.1", 0, 2620)
+        server._active_capture = (writing, "177", "sdp_vdif")
+        monkeypatch.setattr(server, "_poll_once", AsyncMock())
+        replies = iter(["!record= 1 ;", *states])
+
+        async def command(port, command):
+            if command == "record?":
+                assert writing.exists()
+                assert not (writing.parent / "raw").exists()
+            return next(replies)
+
+        monkeypatch.setattr(proxy, "jive_cmd", command)
+        await server.request_capture_done(None)
+        assert (writing.parent / "raw/capture.json").exists()
+        assert server._active_capture is None
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("status", ["!record? 0 : on ;", "!record? 4 : error ;", "!record? 0 : unknown ;"])
+def test_unconfirmed_stop_retains_unfinished_capture(tmp_path, monkeypatch, status):
+    writing = make_raw_writing(tmp_path)
+    monkeypatch.setattr(proxy, "RECORD_STOP_TIMEOUT", 0.01)
+
+    async def run():
+        server = proxy.Jive5abServer("127.0.0.1", 0, 2620)
+        server._active_capture = (writing, "177", "sdp_vdif")
+        monkeypatch.setattr(server, "_poll_once", AsyncMock())
+
+        async def command(port, command):
+            return "!record= 1 ;" if command == "record = off" else status
+
+        monkeypatch.setattr(proxy, "jive_cmd", command)
+        with pytest.raises(proxy.FailReply):
+            await server.request_capture_done(None)
+        assert writing.exists()
+        assert not (writing.parent / "raw").exists()
+        assert server._active_capture is not None
+
+    asyncio.run(run())

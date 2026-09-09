@@ -13,11 +13,6 @@ J5A_PID=$!
 
 send() { echo "$1;" | socat - TCP:127.0.0.1:${J5A_PORT},connect-timeout=1 || true; }
 
-extract_target() {
-  local target="${J5A_NETPORT%%@*}"
-  printf '%s\n' "${target%%+*}"
-}
-
 extract_route_dev() {
   awk '{for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit }}'
 }
@@ -30,7 +25,7 @@ is_multicast_ipv4() {
 
 verify_multicast_route() {
   local target route_output route_dev
-  target="$(extract_target)"
+  target="$1"
   [[ -n "${target}" ]] || return 0
   [[ -n "${J5A_CBF_INTERFACE:-}" ]] || return 0
   is_multicast_ipv4 "${target}" || return 0
@@ -96,10 +91,15 @@ else
   send "net_protocol = udp"
 fi
 
+J5A_NETPORT="$(python3 /usr/local/bin/expand_net_port.py "${J5A_NETPORT}")"
+IFS=':' read -r -a NETPORT_ARR <<< "${J5A_NETPORT}"
+for destination in "${NETPORT_ARR[@]}"; do
+  target="${destination%%@*}"
+  verify_multicast_route "${target//[[:space:]]/}"
+done
+
 echo "[entrypoint] net_port = ${J5A_NETPORT}"
 send "net_port = ${J5A_NETPORT}"
-
-verify_multicast_route
 
 # (legacy) net2file autostart
 if [[ "${AUTOSTART_NET2FILE:-false}" == "true" ]]; then
