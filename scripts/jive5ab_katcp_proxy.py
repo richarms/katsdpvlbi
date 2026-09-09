@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 WRITING_SUFFIX = ".writing"
 HANDOFF_VERSION = 1
+RECORD_STOP_TIMEOUT = 10.0
 
 
 # ---------------- low-level jive helpers ----------------
@@ -336,14 +337,32 @@ class Jive5abServer(DeviceServer):
                 logger.error("capture-init failed: %s", err)
                 raise FailReply(str(err))
 
+    async def _wait_record_stopped(self) -> None:
+        """Confirm completion after jive5ab accepts an asynchronous stop."""
+        while True:
+            reply = await jive_cmd(self.jive_port, "record?")
+            _, detail = parse_reply_status(reply)
+            require_success(reply, "record?")
+            state = detail.partition(":")[0].strip()
+            if state == "off":
+                return
+            if state != "on":
+                raise ValueError(f"Unexpected record state while stopping: {reply!r}")
+            await asyncio.sleep(0.1)
+
     async def request_record_stop(self, ctx):
         """Stop VBS recording. Usage: ?record-stop"""
         try:
             rep = await jive_cmd(self.jive_port, "record = off")
             code, detail = parse_reply_status(rep)
-            # Only an acknowledged stop (or an explicit already-stopped response)
-            # permits the capture handoff. Code 1 is not evidence of completion.
-            if code != 0 and not (code == 6 and detail == "Not doing record"):
+            # The pinned jive5ab returns 1 even when stopping successfully. It
+            # only permits handoff once record? explicitly confirms "off".
+            if code == 1:
+                try:
+                    await asyncio.wait_for(self._wait_record_stopped(), RECORD_STOP_TIMEOUT)
+                except asyncio.TimeoutError as err:
+                    raise RuntimeError("Timed out waiting for jive5ab to confirm record off") from err
+            elif code != 0 and not (code == 6 and detail == "Not doing record"):
                 if detail:
                     raise RuntimeError(f"record failed with code {code}: {detail}")
                 raise RuntimeError(f"record failed with code {code}")
