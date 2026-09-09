@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
@@ -13,8 +14,8 @@ from aiokatcp import DeviceServer, FailReply, Sensor
 
 logger = logging.getLogger(__name__)
 
-VDIF_PRODUCT_NAME = "vdif"
 WRITING_SUFFIX = ".writing"
+HANDOFF_VERSION = 1
 
 
 # ---------------- low-level jive helpers ----------------
@@ -87,16 +88,56 @@ def require_success(reply: str, command: str) -> None:
         raise RuntimeError(f"{command} failed with code {code}")
 
 
-def capture_block_to_vdif_scan(capture_block_id: str) -> Tuple[str, str]:
-    """Map a capture block id to (<cbid_dir>, <scan_name>) for recorder output."""
+def validate_path_component(value: str) -> str:
+    """Accept one unambiguous capture or stream identifier, without normalising it."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value) or ".." in value:
+        raise ValueError(f"Invalid capture/stream identifier: {value!r}")
+    return value
 
-    cbid = capture_block_id.strip()
-    if not cbid:
-        raise ValueError("capture_block_id required")
-    if "/" in cbid or "\\" in cbid or ".." in cbid:
-        raise ValueError(f"invalid capture_block_id for path construction: {cbid!r}")
-    scan_name = f"{cbid}_{VDIF_PRODUCT_NAME}"
-    return cbid, scan_name
+
+def capture_block_to_vdif_scan(capture_block_id: str, stream_name: str) -> Tuple[str, str]:
+    """Return the capture ID and stable, stream-specific jive5ab scan name."""
+    if not re.fullmatch(r"[0-9]+", capture_block_id):
+        raise ValueError(f"Invalid capture block ID (decimal digits required): {capture_block_id!r}")
+    cbid = capture_block_id
+    return cbid, f"{cbid}_{validate_path_component(stream_name)}"
+
+
+def close_capture(product_root: Path, cbid: str, stream_name: str) -> Path:
+    """Publish a closed raw capture after jive5ab has stopped successfully.
+
+    The directory rename is the handoff. Neither an unfinished directory nor a
+    capture.json file inside one authorises postprocessing.
+    """
+    final_dir = product_root.with_name("raw")
+    if final_dir.exists():
+        raise FileExistsError(f"Closed capture already exists: {final_dir}")
+    _, scan_name = capture_block_to_vdif_scan(cbid, stream_name)
+    flatten_vdif_recording_layout(product_root, scan_name)
+    shards = []
+    for path in sorted(product_root.iterdir()):
+        if path.name == "capture.json":
+            continue  # A previous close may have failed immediately before rename.
+        if path.is_symlink() or not path.is_file() or not re.fullmatch(
+            re.escape(scan_name) + r"\.[0-9]+", path.name
+        ):
+            raise ValueError(f"Unexpected recorder output: {path}")
+        size = path.stat().st_size
+        if size == 0:
+            raise ValueError(f"Empty recorder shard: {path}")
+        shards.append({"name": path.name, "size_bytes": size})
+    if not shards:
+        raise ValueError(f"Cannot close an empty capture: {product_root}")
+    manifest = {
+        "version": HANDOFF_VERSION,
+        "capture_block_id": cbid,
+        "stream_name": stream_name,
+        "status": "closed",
+        "shards": shards,
+    }
+    (product_root / "capture.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    product_root.rename(final_dir)
+    return final_dir
 
 
 def first_disk_path_from_env() -> str:
@@ -147,7 +188,8 @@ class Jive5abServer(DeviceServer):
         self.s_nport = self._make_sensor(str, "jive5ab-port", "net_port", "unknown")
         self.s_error = self._make_sensor(str, "jive5ab-error", "last proxy error", "")
 
-        self._active_capture: Optional[Tuple[Path, str]] = None
+        self._active_capture: Optional[Tuple[Path, str, str]] = None
+        self._capture_lock = asyncio.Lock()
 
     def _make_sensor(self, sensor_type, name, description, initial):
         """Create a sensor, initialise it and add it to the server."""
@@ -273,32 +315,35 @@ class Jive5abServer(DeviceServer):
 
     async def request_capture_init(self, ctx, capture_block_id):
         """Controller compatibility alias. Usage: ?capture-init <capture_block_id>"""
-        capture_block_id = _as_text(capture_block_id)
-        try:
-            cbid, scan_name = capture_block_to_vdif_scan(capture_block_id)
-            cbid_root = os.path.join(first_disk_path_from_env(), cbid)
-            product_root = os.path.join(cbid_root, scan_name + WRITING_SUFFIX)
-            os.makedirs(product_root, exist_ok=True)
-            rep = await jive_cmd(self.jive_port, f"set_disks = {product_root}")
-            require_success(rep, "set_disks")
-            self._active_capture = (Path(product_root), scan_name)
-            return await self.request_record_start(ctx, scan_name)
-        except (OSError, RuntimeError, ValueError, asyncio.TimeoutError) as err:
-            self._active_capture = None
-            self.s_error.set_value(str(err))
-            logger.error("capture-init failed: %s", err)
-            raise FailReply(str(err))
+        async with self._capture_lock:
+            if self._active_capture is not None:
+                raise FailReply("A capture is already active; close it before starting another")
+            try:
+                stream_name = os.environ.get("VLBI_STREAM_NAME", "")
+                cbid, scan_name = capture_block_to_vdif_scan(_as_text(capture_block_id), stream_name)
+                capture_root = Path(first_disk_path_from_env()) / ".vlbi" / cbid / stream_name
+                if (capture_root / "raw").exists():
+                    raise FileExistsError(f"Closed capture already exists: {capture_root / 'raw'}")
+                product_root = capture_root / ("raw" + WRITING_SUFFIX)
+                product_root.mkdir(parents=True, exist_ok=False)
+                rep = await jive_cmd(self.jive_port, f"set_disks = {product_root}")
+                require_success(rep, "set_disks")
+                reply = await self.request_record_start(ctx, scan_name)
+                self._active_capture = (product_root, cbid, stream_name)
+                return reply
+            except (OSError, RuntimeError, ValueError, asyncio.TimeoutError) as err:
+                self.s_error.set_value(str(err))
+                logger.error("capture-init failed: %s", err)
+                raise FailReply(str(err))
 
     async def request_record_stop(self, ctx):
         """Stop VBS recording. Usage: ?record-stop"""
         try:
             rep = await jive_cmd(self.jive_port, "record = off")
             code, detail = parse_reply_status(rep)
-            # jive5ab may auto-stop if the stream dies; treat explicit stop as idempotent.
-            # Some FlexBuff/jive builds also return code 1 on record-off despite writing data.
-            if code == 1:
-                logger.debug("record-stop returned code 1, treating as successful stop: %r", rep.strip())
-            elif code != 0 and not (code == 6 and detail == "Not doing record"):
+            # Only an acknowledged stop (or an explicit already-stopped response)
+            # permits the capture handoff. Code 1 is not evidence of completion.
+            if code != 0 and not (code == 6 and detail == "Not doing record"):
                 if detail:
                     raise RuntimeError(f"record failed with code {code}: {detail}")
                 raise RuntimeError(f"record failed with code {code}")
@@ -311,16 +356,18 @@ class Jive5abServer(DeviceServer):
 
     async def request_capture_done(self, ctx):
         """Controller compatibility alias. Usage: ?capture-done"""
-        reply = await self.request_record_stop(ctx)
-        if self._active_capture is not None:
-            product_root, scan_name = self._active_capture
+        async with self._capture_lock:
+            reply = await self.request_record_stop(ctx)
+            if self._active_capture is None:
+                return reply
             try:
-                flattened = flatten_vdif_recording_layout(product_root, scan_name)
-                if flattened:
-                    logger.info("Flattened nested VDIF capture layout under %s", product_root)
-            finally:
-                self._active_capture = None
-        return reply
+                final_dir = close_capture(*self._active_capture)
+            except (OSError, ValueError) as err:
+                self.s_error.set_value(str(err))
+                raise FailReply(str(err))
+            self._active_capture = None
+            logger.info("Closed raw VDIF capture: %s", final_dir)
+            return reply
 
     async def request_record_status(self, ctx):
         """Query VBS recording status. Usage: ?record-status"""
