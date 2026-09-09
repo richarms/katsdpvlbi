@@ -1,0 +1,20 @@
+--- a/src/getsok.cc
++++ b/src/getsok.cc
+@@ -369,6 +369,17 @@
+ 			ASSERT_ZERO( ::setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+ 						              &mcjoin, sizeof(mcjoin)) );
+ 
++#ifdef IP_MULTICAST_ALL
++            // A wildcard-bound socket must only receive groups joined on this
++            // socket, not every group joined by the host. Otherwise parallel
++            // recordings on different groups sharing a UDP port receive each
++            // other's packets and UDPs sequence numbers collide.
++            const int multicast_all( 0 );
++            ASSERT2_ZERO( ::setsockopt(s, IPPROTO_IP, IP_MULTICAST_ALL,
++                                      &multicast_all, sizeof(multicast_all)),
++                          ::close(s) );
++#endif
++
+             // okay, we did connex0r to a multicast addr.
+             // Possibly, failing to set the ttl is not fatal
+             // but we _do_ warn the user that their data

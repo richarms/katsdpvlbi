@@ -25,6 +25,8 @@ RUN git clone "${JIVE5AB_REPO}" /opt/jive5ab
 WORKDIR /opt/jive5ab
 RUN git checkout --detach "${JIVE5AB_REF}" && \
 	mkdir build
+COPY patches/jive5ab-multicast-isolation.patch /tmp/jive5ab-multicast-isolation.patch
+RUN git apply /tmp/jive5ab-multicast-isolation.patch
 WORKDIR /opt/jive5ab/build
 RUN cmake -DSSAPI_ROOT=nossapi .. && \
 	make -j$(nproc) B2B=64 && \
