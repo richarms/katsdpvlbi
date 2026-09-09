@@ -39,19 +39,24 @@ This is one beam represented as four VLBI threads from sideband x polarisation.
 - `?capture-init <cbid>`
 - `?capture-done`
 
-The intended product layout is:
-- in-progress directory:
-  - `/scratch/data/<cbid>/<cbid>_vdif.writing/`
-- final directory:
-  - `/scratch/data/<cbid>/<cbid>_vdif/`
+The version-1 [recorder handoff contract](docs/handoff.md) defines the only
+supported controller-managed layout:
 
-Preferred shard naming inside the directory:
-- `<cbid>_vdif.00000000`
-- `<cbid>_vdif.00000001`
+- recording: `<data_dir>/.vlbi/<cbid>/<stream>/raw.writing/`
+- closed raw input: `<data_dir>/.vlbi/<cbid>/<stream>/raw/`
+- shards: `<cbid>_<stream>.<decimal-shard-number>`
+- closure record: `raw/capture.json`, containing identity, version, and shard sizes
 
-Implementation Notes:
-- `.writing` should indicate product state on the directory
-- shard basenames should remain stable and should not themselves carry `.writing`
+`data_dir` is the shared volume root from `DISK_PATHS`. The controller must also
+set `VLBI_STREAM_NAME`; it is not inferred from the capture ID. The recorder
+alone stops capture, flattens jive5ab's nested scan directory, and renames
+`raw.writing` to `raw`. An empty capture or ambiguous stop response is an error.
+
+`vlbimeta` consumes the closed raw directory and publishes separate
+`<data_dir>/<cbid>_<stream>.vdif` and `<data_dir>/<cbid>_<stream>.metadata`
+products. Raw data is retained. The old `_vdif` directory layouts are not
+accepted as the new handoff; controller and recorder/postprocess images must
+be updated together.
 
 ## Receiver Modes
 
